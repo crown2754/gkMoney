@@ -71,6 +71,16 @@ class UiKitComponentsTest extends TestCase
         $view->assertSee('focus:ring-danger-500', false);
     }
 
+    public function test_label_component_supports_inverse_tone_for_dark_surfaces(): void
+    {
+        $view = $this->blade('<x-ui.label tone="inverse" for="dark-amount" value="交易金額" />');
+
+        $view->assertSee('交易金額');
+        $view->assertSee('for="dark-amount"', false);
+        $view->assertSee('text-neutral-100', false);
+        $view->assertDontSee('text-neutral-700', false);
+    }
+
     public static function buttonVariantProvider(): array
     {
         return [
