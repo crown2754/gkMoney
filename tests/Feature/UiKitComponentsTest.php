@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class UiKitComponentsTest extends TestCase
@@ -36,6 +37,22 @@ class UiKitComponentsTest extends TestCase
         $view->assertSee('focus-visible:ring-danger-500', false);
     }
 
+    #[DataProvider('buttonVariantProvider')]
+    public function test_button_component_renders_each_variant(string $variant, string $expectedClass): void
+    {
+        $view = $this->blade("<x-ui.button variant=\"{$variant}\">按鈕</x-ui.button>");
+
+        $view->assertSee($expectedClass, false);
+    }
+
+    #[DataProvider('buttonSizeProvider')]
+    public function test_button_component_renders_each_size(string $size, string $expectedClass): void
+    {
+        $view = $this->blade("<x-ui.button size=\"{$size}\">按鈕</x-ui.button>");
+
+        $view->assertSee($expectedClass, false);
+    }
+
     public function test_input_label_and_card_components_render_accessible_form_surface(): void
     {
         $view = $this->blade(<<<'BLADE'
@@ -52,5 +69,24 @@ class UiKitComponentsTest extends TestCase
         $view->assertSee('text-right', false);
         $view->assertSee('border-danger-500', false);
         $view->assertSee('focus:ring-danger-500', false);
+    }
+
+    public static function buttonVariantProvider(): array
+    {
+        return [
+            'primary' => ['primary', 'bg-primary-600'],
+            'secondary' => ['secondary', 'bg-secondary-50'],
+            'danger' => ['danger', 'bg-danger-600'],
+            'ghost' => ['ghost', 'bg-transparent'],
+        ];
+    }
+
+    public static function buttonSizeProvider(): array
+    {
+        return [
+            'sm' => ['sm', 'px-3 py-2 text-xs'],
+            'md' => ['md', 'px-4 py-2.5 text-sm'],
+            'lg' => ['lg', 'px-5 py-3 text-base'],
+        ];
     }
 }
