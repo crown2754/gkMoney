@@ -1,51 +1,40 @@
 <?php
 
-namespace App\Models;
+namespace App\Http\Livewire;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Livewire\Component;
+use App\Models\Expense;
+use Illuminate\Support\Facades\Auth;
 
-class Expense extends Model
+class ExpenseForm extends Component
 {
-    use HasUuids;
+    public $amount;
+    public $description;
+    public $expense_date;
 
-    public $incrementing = false;
-    protected $keyType = 'string';
-    protected $table = 'expenses';
-
-    protected $fillable = [
-        'user_id',
-        'date',
-        'amount_cents',
-        'currency',
-        'category_id',
-        'description',
-        'receipt_image_url',
-        'is_deleted',
+    protected $rules = [
+        'amount'        => 'required|numeric|min:0',
+        'description'   => 'required|string|max:255',
+        'expense_date'  => 'required|date',
     ];
 
-    protected $casts = [
-        'id' => 'string',
-        'user_id' => 'string',
-        'date' => 'date',
-        'amount_cents' => 'integer',
-        'currency' => 'string',
-        'category_id' => 'string',
-        'description' => 'string',
-        'receipt_image_url' => 'string',
-        'created_at' => 'datetime:tz',
-        'updated_at' => 'datetime:tz',
-        'is_deleted' => 'boolean',
-    ];
-
-    public function user(): BelongsTo
+    public function submit()
     {
-        return $this->belongsTo(\App\Models\User::class, 'user_id');
+        $this->validate();
+
+        Expense::create([
+            'user_id'       => Auth::id(),      // integer ID from users table
+            'amount'        => $this->amount,
+            'description'   => $this->description,
+            'expense_date'  => $this->expense_date,
+        ]);
+
+        $this->reset(['amount', 'description', 'expense_date']);
+        session()->flash('message', 'Expense created successfully.');
     }
 
-    public function category(): BelongsTo
+    public function render()
     {
-        return $this->belongsTo(\App\Models\ExpenseCategory::class, 'category_id');
+        return view('livewire.expense-form');
     }
 }
