@@ -4,95 +4,59 @@ namespace App\Livewire;
 
 use Livewire\Component;
 use App\Models\Expense;
-use App\Models\User;
-use App\Models\Account;
 use App\Models\ExpenseCategory;
-use App\Models\ExpenseTag;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
-use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Session;
 
 class AddExpense extends Component
 {
-    // Form fields
-    public $amount;
+    public $date;
+    public $amount_cents;
     public $currency = 'USD';
-    public $expense_date;
-    public $description = '';
     public $category_id;
-    public $tags = []; // array of tag IDs
-    public $account_id;
-    public $receipt_id; // UUID of pre‑uploaded receipt
-    public $metadata = [];
+    public $description = '';
+    public $receipt_image_url = '';
 
-    // Validation rules
     protected $rules = [
-        'amount' => 'required|numeric|min:0.01',
-        'currency' => ['required', 'string', 'size:3', Rule::in(['USD','EUR','GBP','JPY','CAD'])],
-        'expense_date' => ['required', 'date', 'after_or_equal:today', 'before:today +8 days'],
-        'description' => 'nullable|string|max:255',
-        'category_id' => ['nullable', 'uuid', Rule::exists('expense_categories','id')->whereNull('deleted_at')],
-        'tags' => 'array',
-        'tags.*' => ['uuid', Rule::exists('expense_tags','id')
-            ->where('user_id', Auth::id())
-            ->whereNull('deleted_at')],
-        'account_id' => ['nullable', 'uuid', Rule::exists('accounts','id')
-            ->where('user_id', Auth::id())],
-        'receipt_id' => ['nullable', 'uuid', Rule::exists('expense_receipts','id')],
-        'metadata' => 'nullable|array',
+        'date' => ['required', 'date', 'before_or_equal:tomorrow'],
+        'amount_cents' => ['required', 'integer', 'min:1', 'max:999999999'],
+        'currency' => ['required', 'size:3', 'upper'],
+        'category_id' => ['required', 'uuid', Rule::exists('expense_categories', 'id')->where('user_id', Auth::id())],
+        'description' => ['nullable', 'string', 'max:250'],
+        'receipt_image_url' => ['nullable', 'url', 'max:500'],
     ];
 
     public function mount()
     {
-        $this->expense_date = today()->toDateString();
-        $user = Auth::user();
-        if ($user) {
-            $defaultAccount = $user->accounts()->first();
-            $this->account_id = $defaultAccount?->id ?? null;
-        }
+        $this->date = today()->toDateString();
     }
 
     public function save()
     {
         $this->validate();
 
-        $expense = Expense::create([
-            'id' => (string) Str::uuid(),
+        Expense::create([
             'user_id' => Auth::id(),
-            'account_id' => $this->account_id,
-            'amount_cents' => (int) round($this->amount * 100),
+            'date' => $this->date,
+            'amount_cents' => $this->amount_cents,
             'currency' => $this->currency,
-            'expense_date' => $this->expense_date,
-            'description' => $this->description,
             'category_id' => $this->category_id,
-            'is_recurring' => false,
-            'receipt_id' => $this->receipt_id,
-            'external_id' => null,
-            'metadata' => $this->metadata,
+            'description' => $this->description,
+            'receipt_image_url' => $this->receipt_image_url,
         ]);
 
-        if (!empty($this->tags)) {
-            $expense->tags()->attach($this->tags);
-        }
-
-        Session::flash('message', 'Expense added successfully.');
-        return redirect()->route('expenses.index'); // adjust route as needed
+        session()->flash('message', 'Expense saved.');
+        $this->emitTo('expense-list', 'refresh');
+        $this->reset(['amount_cents', 'category_id', 'description', 'receipt_image_url']);
+        $this->resetErrorBag();
+        $this->resetValidation();
     }
 
     public function render()
     {
-        $categories = ExpenseCategory::whereNull('deleted_at')
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->get();
+        $categories = ExpenseCategory::where('user_id', Auth::id())
+            ->get(['id', 'name', 'icon', 'color']);
 
-        $accounts = Auth::user() ? Auth::user()->accounts()->get() : collect();
-
-        $tags = Auth::user() ? Auth::user()->tags()
-            ->where('is_active', true)
-            ->get() : collect();
-
-        return view('livewire.add-expense', compact('categories', 'accounts', 'tags'));
+        return view('livewire.add-expense', compact('categories'));
     }
 }
