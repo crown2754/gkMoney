@@ -1,6 +1,7 @@
 @props([
     'disabled' => false,
     'error' => false,
+    'rows' => 4,
 ])
 
 @php
@@ -14,8 +15,9 @@
     ])->implode(' ');
 @endphp
 
-<input
+<textarea
+    rows="{{ $rows }}"
     @disabled($disabled)
     @if ($hasError) aria-invalid="true" @endif
     {{ $attributes->merge(['class' => $classes]) }}
->
+>{{ $slot }}</textarea>
