@@ -1,365 +1,266 @@
 # Add Daily Expense Feature Specification  
-
-**Product:** Accounting (Fintech) Mobile/Web App  
-**Feature:** Add Daily Expense – allows users to record a personal or business expense for the current day (or a past date) with minimal friction.  
-**Owner:** Product Manager  
-**Target Release:** Q4 2025  
+**Product:** Accounting App (FinTech)  
+**Feature:** Add a daily expense entry  
+**Owner:** Product Manager – *[Your Name]*  
+**Date:** 2025‑11‑03  
 
 ---  
 
 ## 1. Overview  
+Users need a quick way to record daily expenses (e.g., meals, transport, office supplies) so that their cash‑flow reports stay up‑to‑date without navigating through multiple screens.  
 
-Users often need to capture expenses on the go. This feature provides a fast, guided flow to create an expense entry, attach receipts, categorize, and optionally split or tag the transaction. The entry is persisted to the backend and immediately reflected in reports, budgets, and dashboards.  
+This spec defines the data model, UI screens, and end‑to‑end user flow for the **Add Daily Expense** flow, covering creation, validation, persistence, and confirmation.  
 
 ---  
 
-## 2. Goals  
+## 2. Goals & Success Metrics  
 
-| Goal | Success Metric |
-|------|----------------|
-| Reduce time to log an expense to ≤ 15 seconds on average | Avg. time measured via analytics |
-| Capture > 90 % of daily expenses for active users | Ratio of expenses logged vs. bank‑imported transactions |
-| Maintain data integrity (no duplicate or orphaned entries) | Zero data‑loss incidents in QA |
-| Enable offline entry with sync when back online | Sync success rate ≥ 98 % |
-| Provide clear validation & error messaging | < 2 % error‑retry rate |
+| Goal | Success Indicator |
+|------|-------------------|
+| **Speed** – enable entry in ≤ 15 seconds from tap‑to‑save | Avg. time to complete flow measured via analytics |
+| **Accuracy** – minimize data entry errors | < 2 % of saved entries flagged for correction within 24 h |
+| **Adoption** – increase daily expense entries per active user | +20 % week‑over‑week after release |
+| **Reliability** – zero data loss on sync failures | No orphaned drafts after app restart or network loss |
 
 ---  
 
 ## 3. Non‑Goals  
 
-- Bulk import of expenses (CSV/OFX) – covered by separate feature.  
+- Bulk import of expenses (CSV/OCR) – to be handled in a separate “Import” feature.  
 - Recurring expense scheduling – out of scope for v1.  
-- Multi‑currency conversion at entry time – will use stored base currency; conversion shown later in reports.  
-- Advanced receipt OCR – placeholder for future enhancement.  
+- Multi‑currency conversion – amounts are stored in the user’s base currency; conversion UI is handled elsewhere.  
 
 ---  
 
 ## 4. Data Model  
 
-### 4.1 Tables  
-
-| Table | Description |
-|-------|-------------|
-| `expenses` | Core expense record. |
-| `expense_categories` | Hierarchical category lookup (e.g., Food → Groceries). |
-| `expense_tags` | User‑defined tags (many‑to‑many). |
-| `expense_receipts` | Binary receipt storage (reference to object store). |
-| `expense_splits` | For splitting an expense across categories/tags or users. |
-| `users` | Existing user table (FK). |
-| `accounts` | Existing account (wallet/bank) table (FK). |
-
-### 4.2 Schema Details  
-
-#### `expenses`  
+### 4.1 Table: `expenses`  
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
-| `id` | UUID | PK, NOT NULL, DEFAULT `gen_random_uuid()` | Unique identifier |
-| `user_id` | UUID | FK → `users.id`, NOT NULL | Owner |
-| `account_id` | UUID | FK → `accounts.id`, NULLABLE | Source account (cash, card, etc.) |
-| `amount_cents` | BIGINT | NOT NULL, CHECK (>0) | Stored in smallest currency unit |
-| `currency` | CHAR(3) | NOT NULL, DEFAULT user’s base currency (ISO 4217) | e.g., `USD` |
-| `expense_date` | DATE | NOT NULL | Date of expense (defaults to today) |
-| `description` | TEXT | NULLABLE | Free‑form memo |
-| `category_id` | UUID | FK → `expense_categories.id`, NULLABLE | Primary category |
-| `is_recurring` | BOOLEAN | NOT NULL, DEFAULT false | Flag for future use |
-| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT `now()` | Audit |
-| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT `now()` | Audit |
-| `deleted_at` | TIMESTAMPTZ | NULLABLE | Soft delete |
-| `receipt_id` | UUID | FK → `expense_receipts.id`, NULLABLE | Linked receipt |
-| `external_id` | VARCHAR(64) | NULLABLE | ID from bank import for deduplication |
-| `metadata` | JSONB | NULLABLE | Extensible key‑value (e.g., travel mode) |
+| `id` | UUID (PK) | NOT NULL, DEFAULT `gen_random_uuid()` | Unique identifier |
+| `user_id` | UUID (FK → users.id) | NOT NULL, INDEX | Owner of the expense |
+| `date` | DATE | NOT NULL, DEFAULT CURRENT_DATE | Calendar date of the expense (user‑selected) |
+| `amount_cents` | BIGINT | NOT NULL, CHECK (`amount_cents` > 0) | Monetary value in smallest currency unit (e.g., cents) |
+| `currency` | CHAR(3) | NOT NULL, DEFAULT user’s base currency (ISO‑4217) | Currency code |
+| `category_id` | UUID (FK → expense_categories.id) | NOT NULL, INDEX | Selected category |
+| `description` | TEXT | NULLABLE, max 250 chars | Free‑form note |
+| `receipt_image_url` | TEXT | NULLABLE | URL to uploaded receipt (if any) |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT now() | Timestamp when record was first saved |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT now() | Timestamp of last edit |
+| `is_deleted` | BOOLEAN | NOT NULL, DEFAULT false | Soft‑delete flag |
 
-#### `expense_categories`  
+### 4.2 Table: `expense_categories` (reference)  
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | UUID | PK |
-| `parent_id` | UUID | FK → same table (self‑ref), NULLABLE |
-| `name` | VARCHAR(100) | NOT NULL |
-| `icon` | VARCHAR(50) | NULLABLE (e.g., FontAwesome class) |
-| `is_active` | BOOLEAN | NOT NULL, DEFAULT true |
-| `sort_order` | INTEGER | NOT NULL, DEFAULT 0 |
-
-#### `expense_tags`  
-
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | UUID | PK |
-| `user_id` | UUID | FK → `users.id`, NOT NULL |
-| `label` | VARCHAR(50) | NOT NULL |
-| `color` | CHAR(7) | NOT NULL (hex) |
-| `is_active` | BOOLEAN | NOT NULL, DEFAULT true |
-
-#### `expense_receipts`  
-
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | UUID | PK |
-| `storage_key` | VARCHAR(255) | NOT NULL (reference to S3/GCS) |
-| `mime_type` | VARCHAR(100) | NOT NULL |
-| `size_bytes` | BIGINT | NOT NULL |
-| `uploaded_at` | TIMESTAMPTZ | NOT NULL, DEFAULT `now()` |
-
-#### `expense_splits` (optional, for future)  
-
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | UUID | PK |
-| `expense_id` | UUID | FK → `expenses.id`, NOT NULL |
-| `category_id` | UUID | FK → `expense_categories.id`, NULLABLE |
-| `tag_id` | UUID | FK → `expense_tags.id`, NULLABLE |
-| `amount_cents` | BIGINT | NOT NULL |
-| `note` | TEXT | NULLABLE |
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | UUID (PK) | NOT NULL, DEFAULT `gen_random_uuid()` | |
+| `user_id` | UUID (FK → users.id) | NOT NULL | Categories are user‑specific (allow custom categories) |
+| `name` | VARCHAR(50) | NOT NULL | e.g., “Meals”, “Transport” |
+| `icon` | VARCHAR(30) | NULLABLE | Identifier for UI icon (e.g., “fa-utensils”) |
+| `color` | CHAR(7) | NULLABLE | Hex colour for UI highlight |
+| `is_system` | BOOLEAN | NOT NULL, DEFAULT false | Pre‑defined categories shipped with the app |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT now() | |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT now() | |
 
 ### 4.3 Indexes  
 
-- `expenses(user_id, expense_date DESC)` – fast daily list.  
-- `expenses(account_id)` – for account‑wise filtering.  
-- `expenses(category_id)` – category reports.  
-- `expense_receipts(expense_id)` – lookup receipt.  
-- `expense_tags(user_id, label)` – unique tag per user.  
-
-### 4.4 Constraints & Validation  
-
-- `amount_cents` must be > 0.  
-- `expense_date` cannot be > today + 7 days (future‑lookup limited to a week for planning).  
-- If `receipt_id` is set, the referenced receipt must belong to the same user.  
-- Soft‑delete: queries must filter `deleted_at IS NULL`.  
+- `expenses(user_id, date DESC)` – for quick daily lists.  
+- `expenses(category_id)` – for category‑based reporting.  
 
 ---  
 
-## 5. API Specification  
+## 5. UI Specification  
 
-All endpoints require OAuth2 Bearer token (`user_id` derived from token).  
+### 5.1 Screens  
 
-### 5.1 Create Expense  
+| Screen | Purpose | Key Elements |
+|--------|---------|--------------|
+| **Expense Entry Form** (modal or full‑screen) | Capture a single expense | - Date picker (defaults to today) <br> - Amount field (numeric keyboard, currency symbol) <br> - Category selector (searchable list with icons) <br> - Description field (optional, multiline, max 250) <br> - Attach receipt button (camera/gallery) <br> - Cancel & Save buttons |
+| **Success Toast** | Confirmation after save | Brief message: “Expense saved”, undo option for 5 s |
+| **Error Inline** | Validation feedback | Red highlight under offending field with concise message |
+| **Expense List (Daily)** – *existing screen* | Show today’s expenses; new entry appears at top | Swipe‑to‑edit/delete, total sum at bottom |
 
-**POST** `/api/v1/expenses`  
+### 5.2 Component Details  
 
-**Request Body**  
+| Component | Type | Props / State | Validation |
+|-----------|------|---------------|------------|
+| DatePicker | Native date picker (or custom calendar) | `selectedDate: Date` | Must be ≤ today + 1 (allow future‑dated entries for upcoming expenses) |
+| AmountField | TextInput (numeric) | `amount: string` | > 0, max 9,999,999.99 (configurable) |
+| CategorySelector | Searchable dropdown | `selectedCategoryId: UUID` | Required; shows icons & names |
+| DescriptionField | TextInput (multiline) | `description: string` | Max 250 chars; trim whitespace |
+| ReceiptUploader | Button + preview | `imageUrl?: string` | Accepts JPEG/PNG ≤ 5 MB; shows thumbnail |
+| SaveButton | Button | `isEnabled: boolean` | Enabled only when all required fields pass validation |
+| CancelButton | Button | – | Returns to previous screen without saving |
+
+### 5.3 Interaction & Feedback  
+
+- **Live validation**: As user types, field‑level errors appear instantly.  
+- **Amount formatting**: Auto‑insert commas/currency symbol while preserving cents internally.  
+- **Category search**: Debounced 300 ms; shows recent/frequent categories first.  
+- **Receipt upload**: After picking image, compress to ≤ 800 px width, upload to storage service, store URL. Show upload progress spinner.  
+- **Undo**: Toast appears for 5 s with “Undo” action; tapping deletes the just‑saved expense (soft‑delete flag set).  
+
+---  
+
+## 6. User Flow  
+
+```mermaid
+flowchart TD
+    A[Open Add Expense (FAB or + button)] --> B[Expense Entry Form]
+    B --> C1{Date Picker}
+    C1 -->|Select Date| B
+    B --> C2{Amount Field}
+    C2 -->|Enter Amount| B
+    B --> C3{Category Selector}
+    C3 -->|Choose Category| B
+    B --> C4{Description (optional)}
+    C4 -->|Enter Text| B
+    B --> C5{Attach Receipt (optional)}
+    C5 -->|Pick/Capture Image| B
+    B --> C6{Validate All Fields}
+    C6 -->|Invalid| D[Show Inline Errors]
+    D --> B
+    C6 -->|Valid| E[Disable Form, Show Spinner]
+    E --> F[Call API POST /expenses]
+    F -->|201 Created| G[Save Success Toast + Undo]
+    G --> H[Close Form, Refresh Daily List]
+    F -->|4xx/5xx| I[Show Error Toast]
+    I --> B
+```
+
+### Step‑by‑Step Narrative  
+
+1. **Entry Point** – User taps the **FAB** (`+`) on the home/dashboard or navigates via **Menu → Add Expense**.  
+2. **Form Load** – Date defaults to today; amount field empty; category selector shows last used category; description blank; receipt preview empty.  
+3. **Data Entry** – User optionally changes date, enters amount (numeric keyboard), selects a category (type‑ahead search), adds a description, and/or attaches a receipt.  
+4. **Validation** – On each blur/change, client‑side validation runs:  
+   - Amount > 0 and within limits.  
+   - Category selected.  
+   - Date not beyond allowed range (today + 1).  
+   - Description length ≤ 250.  
+   - Receipt size/type valid.  
+   Errors appear inline; Save button stays disabled until all pass.  
+5. **Submit** – When all fields are valid, user taps **Save**:  
+   - Form disables, spinner shows.  
+   - Client sends `POST /api/v1/expenses` with JSON payload (see §7).  
+6. **Server Response** –  
+   - **201 Created**: Returns the newly created expense object (including server‑generated `id`, `created_at`).  
+   - Client shows **Success Toast** (“Expense saved”) with an **Undo** action for 5 s.  
+   - Form closes; user returns to the **Daily Expense List**, which updates via optimistic update (new entry inserted at top) or a quick refresh.  
+   - **Undo** triggers a `DELETE /expenses/{id}` (soft‑delete) and removes the toast.  
+   - **Error (4xx/5xx)**: Shows a toast with a generic message (“Failed to save expense”) and keeps the form open for correction.  
+
+### Edge Cases  
+
+| Situation | Handling |
+|-----------|----------|
+| **Network loss before response** | Save request is queued (background sync) with a local optimistic entry marked `is_synced = false`. User sees a “Saving…” banner; when connectivity returns, the request retries. |
+| **Duplicate rapid taps** | Save button disables after first tap; prevents duplicate submissions. |
+| **User changes date to past/future beyond allowed range** | Inline error: “Date must be today or tomorrow”. |
+| **Receipt upload fails** | Show error under receipt preview; user can retry or proceed without receipt. |
+| **Category deleted after selection** | If category becomes unavailable (e.g., admin removed), show error: “Selected category no longer available; please choose another”. |
+| **Amount exceeds max allowed** | Error: “Amount exceeds limit of $9,999,999.99”. |
+
+---  
+
+## 7. API Contract  
+
+### 7.1 Endpoint  
+
+`POST /api/v1/expenses`  
+
+### 7.2 Request  
 
 ```json
 {
-  "account_id": "uuid",               // optional
-  "amount_cents": 1250,               // required
-  "currency": "USD",                  // optional, defaults to user base
-  "expense_date": "2025-09-16",       // ISO‑8601 date, optional (today)
-  "description": "Lunch at cafe",    // optional
-  "category_id": "uuid",              // optional
-  "tags": ["uuid1", "uuid2"],         // optional array of tag IDs
-  "receipt_id": "uuid",               // optional (pre‑uploaded)
-  "metadata": { "travel_mode": "car"} // optional
+  "date": "2025-11-03",
+  "amount_cents": 1250,
+  "currency": "USD",
+  "category_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "description": "Lunch at cafe",
+  "receipt_image_url": null   // optional
 }
 ```
 
-**Responses**  
+*All fields are required except `description` and `receipt_image_url`.*
 
-- `201 Created` – returns created expense object (same shape as GET).  
-- `400 Bad Request` – validation errors (field‑specific).  
-- `401 Unauthorized` – missing/invalid token.  
-- `403 Forbidden` – user does not own referenced account/tag/category.  
-- `409 Conflict` – duplicate `external_id` detected.  
-
-### 5.2 Get Expense Detail  
-
-**GET** `/api/v1/expenses/{expense_id}`  
-
-Returns full expense with nested category, tags, and receipt URL (signed, short‑lived).  
-
-### 5.3 List Today’s Expenses  
-
-**GET** `/api/v1/expenses?date=2025-09-16&limit=20&offset=0`  
-
-- `date` optional (defaults to today).  
-- Supports `search` query on `description`.  
-
-### 5.4 Upload Receipt (multipart/form‑data)  
-
-**POST** `/api/v1/receipts`  
-
-- Returns `receipt_id` and signed URL for direct upload (or stores directly).  
-
-### 5.5 Error Schema  
+### 7.3 Response (201 Created)  
 
 ```json
 {
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Amount must be greater than zero",
-    "details": [
-      { "field": "amount_cents", "issue": "must_be_positive" }
-    ]
-  }
+  "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+  "user_id": "9f86d081-884c-4f5a-b96c-9655b0285e2c",
+  "date": "2025-11-03",
+  "amount_cents": 1250,
+  "currency": "USD",
+  "category_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "description": "Lunch at cafe",
+  "receipt_image_url": null,
+  "created_at": "2025-11-03T08:15:22Z",
+  "updated_at": "2025-11-03T08:15:22Z",
+  "is_deleted": false
 }
 ```
 
----  
+### 7.4 Error Responses  
 
-## 6. User Interface (UI)  
-
-### 6.1 Platforms  
-
-- Mobile (iOS/Android) – primary.  
-- Web (responsive) – secondary, mirrors mobile flow.  
-
-### 6.2 Screen Flow (Wireframe Description)  
-
-| Screen | Key Elements | Interaction |
-|--------|--------------|-------------|
-| **Home / Dashboard** | Floating Action Button (FAB) “+” labeled **Add Expense** | Tap → **Expense Entry** |
-| **Expense Entry** | 1. Amount field (numeric keypad, currency symbol prefixed) <br>2. Date picker (inline, defaults to today, shows calendar) <br>3. Category selector (searchable dropdown with icons) <br>4. Description text field (optional, max 200 chars) <br>5. Tags chip input (type‑ahead, allows multiple) <br>6. Account selector (if multiple accounts) <br>7. Attach receipt button (camera/gallery) <br>8. Cancel / Save buttons (top‑left / top‑right) | - Amount: real‑time validation (show error if empty or zero) <br>- Date: tapping opens modal; selecting > today+7 days shows warning but allows (with confirmation) <br>- Category: shows recent/frequent first <br>- Tags: chips display selected tags; tapping chip removes <br>- Receipt: opens media picker; after selection shows thumbnail with “Remove” overlay; uploads in background, shows progress toast <br>- Save: disabled until amount valid; on tap shows loading spinner, then either success toast + return to Home or error inline |
-| **Success Toast** | “Expense added” + undo snackbar (5 s) | Undo → calls DELETE expense (soft delete) |
-| **Error Inline** | Red border & message under offending field | User can correct and re‑submit |
-| **Receipt Preview (optional)** | Small thumbnail in entry screen, tap to preview full‑size | – |
-| **Settings → Categories / Tags** (out of scope) | Manage master lists | – |
-
-### 6.3 UI Components & Style  
-
-- **Typography:** Body 14 pt, Heading 16 pt, Amount 24 pt (bold).  
-- **Colors:** Primary brand blue for FAB, success green, error red, neutral gray for fields.  
-- **Accessibility:** Minimum touch target 48 dp, label‑for‑input association, voice‑over hints, dynamic type support.  
-- **Offline:** All fields stored locally (SQLite/Realm); Save queues entry for background sync. Receipt uploads are queued and retried with exponential backoff.  
-
-### 6.4 Mockup (ASCII) – Mobile Portrait  
-
-```
-+-----------------------------------+
-|  <  Add Expense   [Save]          |
-+-----------------------------------+
-|  Amount:   [$]  ___________       |
-|              [ 1,250 ]            |
-+-----------------------------------+
-|  Date:   [Today]  ▼               |
-|              (Sep 16, 2025)       |
-+-----------------------------------+
-|  Category:  [Food ▼]              |
-|              (groceries)          |
-+-----------------------------------+
-|  Description: ___________________ |
-|              Lunch at cafe       |
-+-----------------------------------+
-|  Tags:   [ #work #travel ]       |
-|              + Add tag            |
-+-----------------------------------+
-|  Account:  [Checking ▼]           |
-+-----------------------------------+
-|  [Attach Receipt]  [camera icon]  |
-|              [ thumbnail ]        |
-+-----------------------------------+
-```
+| Status | Body Example | Meaning |
+|--------|--------------|---------|
+| 400 | `{ "error": "VALIDATION_FAILED", "details": [{ "field": "amount_cents", "message": "must be greater than 0" }] }` | Validation error |
+| 401 | `{ "error": "UNAUTHORIZED" }` | Missing/invalid auth token |
+| 403 | `{ "error": "FORBIDDEN", "message": "Category not owned by user" }` | Attempt to use another user's category |
+| 422 | `{ "error": "RECEIPT_TOO_LARGE", "message": "Image exceeds 5 MB limit" }` | Receipt upload failure |
+| 500 | `{ "error": "INTERNAL_SERVER_ERROR" }` | Unexpected server error |
 
 ---  
 
-## 7. User Flow (Step‑by‑Step)  
+## 8. Acceptance Criteria  
 
-1. **Entry Point** – User taps FAB “Add Expense” on Home screen.  
-2. **Amount Input** – User enters numeric value; keyboard shows currency symbol; validation ensures > 0.  
-3. **Date Selection** – Optional; defaults to today. If user picks a future date beyond +7 days, a confirmation modal appears (“Are you sure this expense is for a future date?”).  
-4. **Category Selection** – User taps category field → searchable list with icons; recent/frequent categories surface first.  
-5. **Description (Optional)** – Free‑form text field; character counter shown.  
-6. **Tags (Optional)** – User types; matching tags appear; selecting adds a chip. New tags can be created via “Create new tag” (opens modal, stores in `expense_tags`).  
-7. **Account Selection (if multiple)** – Dropdown of user’s accounts (cash, credit cards, wallets).  
-8. **Attach Receipt** – Tap button → media picker → user selects image or takes photo → thumbnail appears; upload begins in background; progress shown via small bar on thumbnail.  
-9. **Save** – When all validations pass, Save button becomes enabled. Tap →  
-   - Show full‑screen spinner.  
-   - Persist expense locally (SQLite/Realm).  
-   - Queue receipt upload (if any).  
-   - Send POST `/expenses` to backend.  
-   - On 201:  
-     - Remove from local queue.  
-     - Show success toast with undo.  
-     - Return to Home; expense appears in list (optimistically updated).  
-   - On error:  
-     - Show inline error (field‑specific) or toast for network issues.  
-     - Keep entry in local queue for retry.  
-10. **Undo** – If user taps undo within 5 s, send DELETE `/expenses/{id}` (soft delete) and remove from UI.  
-11. **Sync** – Background service periodically retries failed uploads/expense posts; when online, updates UI with server timestamps.  
+| # | Criteria | Test Method |
+|---|----------|--------------|
+| AC1 | User can create an expense with mandatory fields (date, amount, category) and see it appear in the daily list within 2 seconds of save. | Manual QA + automation (Espresso/XCUITest). |
+| AC2 | Validation errors appear inline and prevent saving until corrected. | Unit tests on form validation; UI test with invalid input. |
+| AC3 | Saved expense persists after app restart and is reflected in reports. | Save, kill app, relaunch, verify entry present. |
+| AC4 | Receipt attachment works: image uploads, preview shows, and URL stored. | Mock storage service; verify URL in DB. |
+| AC5 | Undo toast removes the expense (soft‑delete) and restores UI state. | Trigger undo, verify `is_deleted = true` and entry removed from list. |
+| AC6 | Network‑loss scenario: expense is saved locally and synced when connectivity returns. | Disable Wi‑Fi, submit, enable Wi‑Fi, verify remote record. |
+| AC7 | Performance: time from tapping FAB to seeing success toast ≤ 15 seconds on median device (Android 10 / iOS 14). | Performance test with profiling tools. |
+| AC8 | No duplicate entries are created on rapid double‑tap. | Stress test tapping Save quickly; assert single DB row. |
+| AC9 | Accessibility: all inputs have proper labels, contrast ≥ 4.5:1, and flow is navigable via TalkBack/VoiceOver. | Accessibility audit (axe, manual). |
+| AC10 | Analytics: event `expense_added` fires with correct properties (amount, category_id, has_receipt). | Instrumentation test. |
 
 ---  
 
-## 8. Validation & Error Handling  
+## 9. Open Questions & Decisions  
 
-| Validation | Where | Message |
-|------------|-------|---------|
-| Amount > 0 | Client (real‑time) + Server | “Amount must be greater than zero” |
-| Currency ISO‑4217 | Client dropdown + Server | “Invalid currency” |
-| Date not > today+7 (without confirmation) | Client (warning) + Server (reject if > today+30) | “Date is too far in the future” |
-| Category exists & active | Server FK | “Invalid category” |
-| Tag belongs to user | Server FK | “Tag not found or not accessible” |
-| Account belongs to user (if provided) | Server FK | “Account not accessible” |
-| Receipt file size ≤ 10 MB | Client + Server | “Receipt too large (max 10 MB)” |
-| Receipt MIME type in allowed list (image/*, application/pdf) | Server | “Unsupported file type” |
-| Duplicate external_id (if provided) | Server unique constraint | “Expense already imported” |
-
-All errors returned as per API error schema; client displays field‑specific messages where possible, otherwise a generic toast.
+| Question | Options | Recommendation |
+|----------|---------|----------------|
+| Should we allow **future‑dated** expenses beyond tomorrow? | - No (only today/tomorrow) <br> - Yes (up to 30 days) | Start with today/tomorrow to keep UI simple; extend later via feature flag. |
+| Where to store receipts? | - Cloud storage (S3/GCS) with public‑read URL <br> - Encrypted blob in DB | Use cloud storage for scalability; store signed URL with short expiry for privacy. |
+| Should category selection be hierarchical (parent/child)? | - Flat list <br> - Two‑level hierarchy | Flat list for v1; hierarchy can be added in v2 as a separate “Category Management” feature. |
+| Do we need **recurring expense** toggle in this screen? | - Yes (adds complexity) <br> - No (defer) | Defer to a dedicated “Recurring Expenses” screen to keep the add flow fast. |
+| Should we support **split** expenses (multiple categories)? | - No (single category per entry) <br> - Yes (allow splitting) | No for MVP; splitting can be handled via “Add another entry” or a future “Split Expense” flow. |
 
 ---  
 
-## 9. Security & Privacy  
+## 10. Implementation Notes  
 
-- **Authentication:** OAuth2 JWT with short‑lived access token + refresh token.  
-- **Authorization:** Every request checks `user_id` against resource ownership (expense, account, tag, category, receipt).  
-- **Data at Rest:** Expense data encrypted with AES‑256 per‑user key stored in keystore; receipts stored encrypted in object store (S3 SSE‑KMS).  
-- **Data in Transit:** TLS 1.2+.  
-- **Privacy:** No PII stored beyond what user inputs; receipts are only accessible to the owner unless explicitly shared (future feature).  
-- **Audit:** `created_at`, `updated_at`, `deleted_at` fields retained for 2 years for compliance.  
-
----  
-
-## 10. Analytics & Telemetry  
-
-| Event | Properties |
-|-------|------------|
-| `expense_added` | `amount_cents`, `currency`, `category_id`, `tags_count`, `has_receipt`, `expense_date_offset` (days from today) |
-| `expense_added_error` | `error_code`, `field` |
-| `receipt_uploaded` | `size_bytes`, `mime_type`, `upload_time_ms` |
-| `expense_undo` | `expense_id` |
-| `sync_success` / `sync_failure` | `retry_count`, `latency_ms` |
-
-Events sent to analytics endpoint (batch every 5 min or on app background). Used to measure funnel completion, time‑to‑save, and error rates.
+- **Frontend**: Use React Native (or native Swift/Kotlin) with Formik/Yup or React Hook Form for validation.  
+- **State Management**: Redux Toolkit or React Query for optimistic updates and offline queue.  
+- **Backend**: Node.js/Express or Go/Gin; validation via Joi or custom middleware; DB layer using Prisma/TypeORM with PostgreSQL.  
+- **Security**: JWT auth; ensure `user_id` is enforced server‑side; receipt URLs should be time‑limited signed URLs.  
+- **Testing**: Unit tests for validation logic, integration tests for API contract, e2e tests for the full flow (Detox).  
 
 ---  
 
-## 11. Open Questions / Decisions Needed  
+### End of Specification  
 
-1. **Maximum look‑ahead date for expenses** – currently +7 days with warning; confirm with finance team.  
-2. **Tag creation UI** – allow inline creation vs. redirect to settings.  
-3. **Receipt storage policy** – retention period (e.g., 2 years) and deletion flow.  
-4. **Currency handling for multi‑currency users** – store amount in user’s base currency; need conversion rate service for reporting.  
-5. **Offline conflict resolution** – “last write wins” vs. merge strategy; decide based on product risk.  
+*Prepared by:* **[Your Name]**, Product Manager – FinTech Accounting App  
+*Date:* 2025‑11‑03  
 
 ---  
 
-## 12. Acceptance Criteria  
 
-- [ ] User can add an expense with amount, date, category, optional description, tags, account, and receipt in ≤ 15 seconds.  
-- [ ] Entry appears instantly in the daily list (optimistic UI) and persists after successful sync.  
-- [ ] Validation errors are shown inline; saving is disabled until all required fields are valid.  
-- [ ] Receipt uploads succeed ≥ 95 % of the time on 3G/4G networks; failures are retryable with exponential backoff.  
-- [ ] Undo snackbar restores state and removes expense from server and local DB.  
-- [ ] No crash or data loss when device loses connectivity mid‑flow.  
-- [ ] All API responses conform to the defined schemas; error messages are actionable.  
-- [ ] Analytics events fire as specified and are visible in the dashboard.  
 
----  
-
-## 13. Timeline (High‑Level)  
-
-| Sprint | Goal |
-|--------|------|
-| 1 (2 weeks) | API endpoints, DB migrations, unit tests |
-| 2 (2 weeks) | Mobile UI screens, local persistence, validation |
-| 3 (2 weeks) | Receipt upload flow, offline queue, sync logic |
-| 4 (1 week) | Undo, analytics integration, QA & bug bash |
-| 5 (1 week) | Beta rollout, feedback incorporation, release prep |
-
----  
-
-**Prepared by:**  
-[Your Name], Product Manager – FinTech Accounting App  
-**Date:** 2025‑09‑16  
-
----  
-
-*End of Specification*
+*Feel free to copy this markdown into your Confluence/Wiki or PRD tool for further refinement.*
