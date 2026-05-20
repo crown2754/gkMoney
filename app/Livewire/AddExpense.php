@@ -1,3 +1,4 @@
+app/Http/Livewire/BankAccountManagement.php
 <?php
 
 namespace App\Livewire;
