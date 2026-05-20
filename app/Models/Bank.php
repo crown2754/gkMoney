@@ -2,14 +2,19 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Bank extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
-        'code',
         'name',
+        'code',
+        'currency_id',
         'is_active',
     ];
 
@@ -17,7 +22,18 @@ class Bank extends Model
         'is_active' => 'boolean',
     ];
 
-    public function bank(): HasMany
+    /**
+     * 銀行透過 exchange_rates 關聯到 Currency
+     */
+    public function currency(): HasOne
+    {
+        return $this->hasOne(ExchangeRate::class);
+    }
+
+    /**
+     * 銀行擁有多個銀行帳戶
+     */
+    public function bankAccounts(): HasMany
     {
         return $this->hasMany(BankAccount::class);
     }
