@@ -11,13 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('expenses', function (Blueprint $table) {
-            $table->id();                               // primary key (bigint unsigned)
-            $table->foreignId('user_id')                // <-- matches users.id (bigint unsigned)
-                  ->constrained()                       // foreign key to users.id
-                  ->onDelete('cascade');                // or 'set null' per business rule
+        Schema::createIfNotExists('expenses', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('user_id')
+                  ->constrained()          // references users.id (bigint)
+                  ->onDelete('cascade');   // adjust as needed
             $table->decimal('amount', 10, 2);
-            $table->string('description');
+            $table->string('description')->nullable();
             $table->date('expense_date');
             $table->timestamps();
         });
