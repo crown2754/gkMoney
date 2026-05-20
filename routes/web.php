@@ -1,30 +1,10 @@
 <?php
 
-use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\BankAccountController;
+use App\Http\Controllers\ExchangeRateController;
 
-Route::get('/', function () {
-    return auth()->check()
-        ? redirect()->route('dashboard')
-        : redirect()->route('login');
+Route::middleware('auth')->group(function () {
+    Route::resource('asset/bank-accounts', BankAccountController::class);
+    Route::resource('asset/exchange-rates', ExchangeRateController::class);
 });
-
-Route::get('/dashboard', function () {
-    return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
-
-Route::middleware(['auth', 'verified'])->group(function () {
-    Route::get('/transactions', function () {
-        return view('transactions.index');
-    })->name('transactions');
-
-    Route::get('/reports', function () {
-        return view('reports.index');
-    })->name('reports');
-
-    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
-});
-
-require __DIR__.'/auth.php';
