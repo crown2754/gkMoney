@@ -4,104 +4,60 @@ app/Http/Livewire/BankAccountManagement.php
 namespace App\Livewire;
 
 use Livewire\Component;
-use App\Models\BankAccount;
+use App\Models\Expense;
+use App\Models\ExpenseCategory;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 
-class BankAccountManagement extends Component
+class AddExpense extends Component
 {
-    // Form state
-    public $currency_code = '';
-    public $balance = '';
-    public $is_active = true;
-
-    // Editing state
-    public $editingId = null;
-
-    // List of accounts
-    public $accounts;
+    public $date;
+    public $amount_cents;
+    public $currency = 'USD';
+    public $category_id;
+    public $description = '';
+    public $receipt_image_url = '';
 
     protected $rules = [
-        'currency_code' => ['required', 'string', 'size:3', Rule::in(['USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY'])],
-        'balance' => ['required', 'numeric'],
-        'is_active' => ['boolean'],
+        'date' => ['required', 'date', 'before_or_equal:tomorrow'],
+        'amount_cents' => ['required', 'integer', 'min:1', 'max:999999999'],
+        'currency' => ['required', 'size:3', 'upper'],
+        'category_id' => ['required', 'uuid', Rule::exists('expense_categories', 'id')->where('user_id', Auth::id())],
+        'description' => ['nullable', 'string', 'max:250'],
+        'receipt_image_url' => ['nullable', 'url', 'max:500'],
     ];
 
     public function mount()
     {
-        $this->loadAccounts();
-    }
-
-    public function loadAccounts()
-    {
-        $this->accounts = BankAccount::where('user_id', Auth::id())
-            ->orderBy('created_at', 'desc')
-            ->get();
-    }
-
-    public function render()
-    {
-        return view('livewire.bank-account-management');
-    }
-
-    public function resetForm()
-    {
-        $this->currency_code = '';
-        $this->balance = '';
-        $this->is_active = true;
-        $this->editingId = null;
-        $this->resetErrorBag();
-        $this->resetValidation();
-    }
-
-    public function create()
-    {
-        $this->resetForm();
-        $this->dispatch('show-modal');
-    }
-
-    public function edit(BankAccount $account)
-    {
-        $this->editingId = $account->id;
-        $this->currency_code = $account->currency_code;
-        $this->balance = $account->balance;
-        $this->is_active = $account->is_active;
-        $this->dispatch('show-modal');
+        $this->date = today()->toDateString();
     }
 
     public function save()
     {
         $this->validate();
 
-        if ($this->editingId) {
-            $account = BankAccount::findOrFail($this->editingId);
-            $this->authorize('update', $account);
-            $account->update([
-                'currency_code' => $this->currency_code,
-                'balance' => $this->balance,
-                'is_active' => $this->is_active,
-            ]);
-            $this->dispatch('toast', message='Account updated successfully.', type='success');
-        } else {
-            BankAccount::create([
-                'user_id' => Auth::id(),
-                'currency_code' => $this->currency_code,
-                'balance' => $this->balance,
-                'is_active' => $this->is_active,
-            ]);
-            $this->dispatch('toast', message='Account created successfully.', type='success');
-        }
+        Expense::create([
+            'user_id' => Auth::id(),
+            'date' => $this->date,
+            'amount_cents' => $this->amount_cents,
+            'currency' => $this->currency,
+            'category_id' => $this->category_id,
+            'description' => $this->description,
+            'receipt_image_url' => $this->receipt_image_url,
+        ]);
 
-        $this->resetForm();
-        $this->loadAccounts();
-        $this->dispatch('hide-modal');
+        session()->flash('message', 'Expense saved.');
+        $this->emitTo('expense-list', 'refresh');
+        $this->reset(['amount_cents', 'category_id', 'description', 'receipt_image_url']);
+        $this->resetErrorBag();
+        $this->resetValidation();
     }
 
-    public function delete(BankAccount $account)
+    public function render()
     {
-        $this->authorize('delete', $account);
-        $account->delete();
-        $this->loadAccounts();
-        $this->dispatch('toast', message='Account deleted.', type='success');
+        $categories = ExpenseCategory::where('user_id', Auth::id())
+            ->get(['id', 'name', 'icon', 'color']);
+
+        return view('livewire.add-expense', compact('categories'));
     }
 }
