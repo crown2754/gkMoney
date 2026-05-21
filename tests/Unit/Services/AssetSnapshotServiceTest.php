@@ -2,111 +2,146 @@
 
 namespace Tests\Unit\Services;
 
-use Tests\TestCase;
 use App\Models\User;
 use App\Models\Bank;
 use App\Models\Currency;
+use App\Models\ExchangeRate;
 use App\Models\BankAccount;
 use App\Models\AssetSnapshot;
 use App\Services\AssetSnapshotService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
 
 class AssetSnapshotServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected AssetSnapshotService $service;
+    private AssetSnapshotService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new AssetSnapshotService();
+        $this->service = app(AssetSnapshotService::class);
     }
 
-    public function test_it_calculates_total_assets_and_creates_snapshot()
+    /** @test */
+    public function 可以產生每日快照()
     {
-        $user = User::create([
-            'name' => 'Alice',
-            'email' => 'alice@example.com',
-            'password' => bcrypt('password'),
-        ]);
-
-        $bank = Bank::create(['code' => '004', 'name' => 'Bank', 'is_active' => true]);
-        $currency = Currency::create(['code' => 'USD', 'name' => 'USD', 'is_active' => true]);
-
-        // 建立兩個帳戶
-        BankAccount::create([
-            'user_id' => $user->id,
-            'bank_id' => $bank->id,
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
             'currency_id' => $currency->id,
-            'alias' => 'Account A',
-            'account_number' => 'A123',
-            'balance' => 100.00,
-            'balance_twd' => 3000.00,
-            'is_active' => true,
+            'rate_to_twd' => 30.000000,
         ]);
 
         BankAccount::create([
             'user_id' => $user->id,
             'bank_id' => $bank->id,
             'currency_id' => $currency->id,
-            'alias' => 'Account B',
-            'account_number' => 'B123',
-            'balance' => 200.00,
-            'balance_twd' => 6000.00,
-            'is_active' => true,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
         ]);
 
-        // 執行快照
-        $this->service->createDailySnapshot($user->id, now()->toDateString());
+        // Act
+        $snapshot = $this->service->createDailySnapshot($user);
 
-        $this->assertDatabaseHas('asset_snapshots', [
-            'user_id' => $user->id,
-            'total_twd' => 9000.00,
-            'snapshot_date' => now()->toDateString(),
-        ]);
+        // Assert
+        $this->assertInstanceOf(AssetSnapshot::class, $snapshot);
+        $this->assertEquals(30000.00, $snapshot->total_twd);
+        $this->assertEquals(now()->toDateString(), $snapshot->snapshot_date);
     }
 
-    public function test_it_updates_snapshot_if_already_exists_for_the_day()
+    /** @test */
+    public function 可以取得最新快照()
     {
-        $user = User::create([
-            'name' => 'Alice',
-            'email' => 'alice@example.com',
-            'password' => bcrypt('password'),
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
         ]);
-
-        $date = now()->toDateString();
-
-        // 先手動建立一個快照
-        AssetSnapshot::create([
-            'user_id' => $user->id,
-            'total_twd' => 5000.00,
-            'snapshot_date' => $date,
-        ]);
-
-        $bank = Bank::create(['code' => '004', 'name' => 'Bank', 'is_active' => true]);
-        $currency = Currency::create(['code' => 'USD', 'name' => 'USD', 'is_active' => true]);
 
         BankAccount::create([
             'user_id' => $user->id,
             'bank_id' => $bank->id,
             'currency_id' => $currency->id,
-            'alias' => 'Account A',
-            'account_number' => 'A123',
-            'balance' => 100.00,
-            'balance_twd' => 8000.00,
-            'is_active' => true,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
         ]);
 
-        // 再次執行快照，應更新為 8000.00
-        $this->service->createDailySnapshot($user->id, $date);
+        $this->service->createDailySnapshot($user);
 
-        $this->assertDatabaseHas('asset_snapshots', [
+        // Act
+        $latestSnapshot = $this->service->getLatestSnapshot($user);
+
+        // Assert
+        $this->assertInstanceOf(AssetSnapshot::class, $latestSnapshot);
+        $this->assertEquals(30000.00, $latestSnapshot->total_twd);
+    }
+
+    /** @test */
+    public function 可以取得歷史快照()
+    {
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
+        ]);
+
+        BankAccount::create([
             'user_id' => $user->id,
-            'total_twd' => 8000.00,
-            'snapshot_date' => $date,
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
         ]);
 
-        $this->assertEquals(1, AssetSnapshot::where('user_id', $user->id)->where('snapshot_date', $date)->count());
+        // 產生多日快照
+        $this->service->createDailySnapshot($user);
+        $this->service->createDailySnapshot($user);
+
+        // Act
+        $history = $this->service->getSnapshotHistory($user, 30);
+
+        // Assert
+        $this->assertGreaterThanOrEqual(1, $history->count());
+    }
+
+    /** @test */
+    public function 快照日期正確()
+    {
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
+        ]);
+
+        BankAccount::create([
+            'user_id' => $user->id,
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
+        ]);
+
+        // Act
+        $snapshot = $this->service->createDailySnapshot($user);
+
+        // Assert
+        $this->assertEquals(now()->toDateString(), $snapshot->snapshot_date);
     }
 }

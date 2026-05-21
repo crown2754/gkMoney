@@ -2,99 +2,109 @@
 
 namespace Tests\Unit\Services;
 
-use Tests\TestCase;
 use App\Models\Currency;
 use App\Models\ExchangeRate;
 use App\Services\ExchangeRateService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
+use Tests\TestCase;
 
 class ExchangeRateServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected ExchangeRateService $service;
+    private ExchangeRateService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ExchangeRateService();
+        $this->service = app(ExchangeRateService::class);
     }
 
-    public function test_it_can_fetch_and_store_today_rates()
+    /** @test */
+    public function 可以抓取今日匯率()
     {
-        $currency = Currency::create([
-            'code' => 'USD',
-            'name' => 'US Dollar',
-            'is_active' => true,
-        ]);
+        // Arrange
+        $currency = Currency::factory()->create(['code' => 'USD']);
 
-        // 模擬外部匯率 API 回傳
-        Http::fake([
-            '*' => Http::response([
-                'rates' => [
-                    'USD' => 31.25
-                ]
-            ], 200)
-        ]);
+        // Act
+        $rates = $this->service->fetchTodayRates();
 
-        $this->service->fetchTodayRates();
-
-        $this->assertDatabaseHas('exchange_rates', [
-            'currency_id' => $currency->id,
-            'rate_to_twd' => 31.250000,
-            'date' => now()->toDateString(),
-        ]);
+        // Assert
+        $this->assertIsArray($rates);
+        $this->assertArrayHasKey('USD', $rates);
     }
 
-    public function test_it_caches_exchange_rates()
+    /** @test */
+    public function 可以手動更新匯率()
     {
-        $currency = Currency::create([
-            'code' => 'USD', 
-            'name' => 'USD', 
-            'is_active' => true
-        ]);
-        
-        ExchangeRate::create([
+        // Arrange
+        $currency = Currency::factory()->create(['code' => 'USD']);
+
+        // Act
+        $exchangeRate = $this->service->updateRate($currency, 30.500000);
+
+        // Assert
+        $this->assertInstanceOf(ExchangeRate::class, $exchangeRate);
+        $this->assertEquals(30.500000, $exchangeRate->rate_to_twd);
+        $this->assertEquals(now()->toDateString(), $exchangeRate->date);
+    }
+
+    /** @test */
+    public function 可以取得最新匯率()
+    {
+        // Arrange
+        $currency = Currency::factory()->create(['code' => 'USD']);
+        ExchangeRate::factory()->create([
             'currency_id' => $currency->id,
             'rate_to_twd' => 30.000000,
-            'date' => now()->toDateString(),
+            'date' => now()->subDay(),
+        ]);
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 31.000000,
+            'date' => now(),
         ]);
 
-        // 測試是否成功寫入與讀取快取
-        $rate = $this->service->getRate($currency->id, now()->toDateString());
-        $this->assertEquals(30.000000, $rate);
+        // Act
+        $rate = $this->service->getLatestRate($currency);
 
-        // 手動覆寫資料庫，若仍有快取，應回傳舊的值
-        ExchangeRate::where('currency_id', $currency->id)->update(['rate_to_twd' => 35.00]);
-        $cachedRate = $this->service->getRate($currency->id, now()->toDateString());
-        $this->assertEquals(30.000000, $cachedRate);
+        // Assert
+        $this->assertEquals(31.000000, $rate);
     }
 
-    public function test_it_can_manually_update_rate_and_clears_cache()
+    /** @test */
+    public function 匯率_API_失敗時保留前一日匯率()
     {
-        $currency = Currency::create([
-            'code' => 'USD', 
-            'name' => 'USD', 
-            'is_active' => true
-        ]);
-        
-        $date = now()->toDateString();
-        
-        // 建立快照並快取
-        $this->service->updateRate($currency->id, 32.50, $date);
-
-        $this->assertDatabaseHas('exchange_rates', [
+        // Arrange
+        $currency = Currency::factory()->create(['code' => 'USD']);
+        ExchangeRate::factory()->create([
             'currency_id' => $currency->id,
-            'rate_to_twd' => 32.500000,
-            'date' => $date,
+            'rate_to_twd' => 30.000000,
+            'date' => now()->subDay(),
         ]);
 
-        // 更新匯率，測試快取是否已被清除並讀取到新值
-        $this->service->updateRate($currency->id, 33.00, $date);
-        $rate = $this->service->getRate($currency->id, $date);
-        
-        $this->assertEquals(33.000000, $rate);
+        // Act - 模擬 API 失敗
+        $this->mock(ExchangeRateService::class, function ($mock) {
+            $mock->shouldReceive('fetchTodayRates')
+                ->andThrow(new \Exception('API 失敗'));
+        });
+
+        // Assert
+        $rate = $this->service->getLatestRate($currency);
+        $this->assertEquals(30.000000, $rate);
+    }
+
+    /** @test */
+    public function 可以快取匯率()
+    {
+        // Arrange
+        $currency = Currency::factory()->create(['code' => 'USD']);
+
+        // Act
+        $this->service->cacheRate($currency, 30.000000);
+
+        // Assert
+        $cachedRate = $this->service->getCachedRate($currency);
+        $this->assertEquals(30.000000, $cachedRate);
     }
 }

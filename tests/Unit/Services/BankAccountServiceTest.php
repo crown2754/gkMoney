@@ -2,131 +2,169 @@
 
 namespace Tests\Unit\Services;
 
-use Tests\TestCase;
 use App\Models\User;
 use App\Models\Bank;
 use App\Models\Currency;
-use App\Models\BankAccount;
 use App\Models\ExchangeRate;
+use App\Models\BankAccount;
 use App\Services\BankAccountService;
+use App\Services\ExchangeRateService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
 
 class BankAccountServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected BankAccountService $service;
-    protected User $user;
-    protected Bank $bank;
-    protected Currency $currency;
+    private BankAccountService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new BankAccountService();
-
-        $this->user = User::create([
-            'name' => 'John Doe',
-            'email' => 'john@example.com',
-            'password' => bcrypt('password'),
-        ]);
-
-        $this->bank = Bank::create([
-            'code' => '008',
-            'name' => 'Hua Nan Bank',
-            'is_active' => true,
-        ]);
-
-        $this->currency = Currency::create([
-            'code' => 'EUR',
-            'name' => 'Euro',
-            'is_active' => true,
-        ]);
-
-        ExchangeRate::create([
-            'currency_id' => $this->currency->id,
-            'rate_to_twd' => 34.000000,
-            'date' => now()->toDateString(),
-        ]);
+        $this->service = app(BankAccountService::class);
     }
 
-    public function test_it_can_create_bank_account()
+    /** @test */
+    public function 可以新增帳戶()
     {
-        $data = [
-            'bank_id' => $this->bank->id,
-            'currency_id' => $this->currency->id,
-            'alias' => 'My EUR Wallet',
-            'account_number' => '888-999-111',
-            'balance' => 150.00,
-            'is_active' => true,
-        ];
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
+        ]);
 
-        $account = $this->service->createAccount($this->user->id, $data);
+        // Act
+        $account = $this->service->createAccount($user, [
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
+        ]);
 
+        // Assert
         $this->assertInstanceOf(BankAccount::class, $account);
-        $this->assertEquals('My EUR Wallet', $account->alias);
-        // 自動重新計算 TWD: 150 * 34 = 5100
-        $this->assertEquals(5100.00, $account->balance_twd);
+        $this->assertEquals('測試帳戶', $account->alias);
+        $this->assertEquals(30000.00, $account->balance_twd);
     }
 
-    public function test_it_can_update_bank_account()
+    /** @test */
+    public function 可以更新帳戶()
     {
-        $account = BankAccount::create([
-            'user_id' => $this->user->id,
-            'bank_id' => $this->bank->id,
-            'currency_id' => $this->currency->id,
-            'alias' => 'Old Alias',
-            'account_number' => '111',
-            'balance' => 100.00,
-            'is_active' => true,
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
         ]);
 
-        $updatedData = [
-            'alias' => 'New Alias',
-            'balance' => 200.00,
-        ];
+        $account = BankAccount::create([
+            'user_id' => $user->id,
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+            'alias' => '原名稱',
+            'account_number' => '1234567890',
+            'balance' => 1000,
+        ]);
 
-        $this->service->updateAccount($account->id, $updatedData);
+        // Act
+        $updated = $this->service->updateAccount($account, [
+            'alias' => '新名稱',
+            'balance' => 2000,
+        ]);
 
-        $account->refresh();
-        $this->assertEquals('New Alias', $account->alias);
-        $this->assertEquals(200.00, $account->balance);
-        $this->assertEquals(6800.00, $account->balance_twd);
+        // Assert
+        $this->assertEquals('新名稱', $updated->alias);
+        $this->assertEquals(2000, $updated->balance);
+        $this->assertEquals(60000.00, $updated->balance_twd);
     }
 
-    public function test_it_can_delete_bank_account()
+    /** @test */
+    public function 可以刪除帳戶()
     {
-        $account = BankAccount::create([
-            'user_id' => $this->user->id,
-            'bank_id' => $this->bank->id,
-            'currency_id' => $this->currency->id,
-            'alias' => 'Delete Me',
-            'account_number' => '111',
-            'balance' => 100.00,
-            'is_active' => true,
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
         ]);
 
-        $this->service->deleteAccount($account->id);
+        $account = BankAccount::create([
+            'user_id' => $user->id,
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
+        ]);
 
+        // Act
+        $result = $this->service->deleteAccount($account);
+
+        // Assert
+        $this->assertTrue($result);
         $this->assertDatabaseMissing('bank_accounts', ['id' => $account->id]);
     }
 
-    public function test_recalculate_all_by_currency()
+    /** @test */
+    public function 可以取得使用者所有帳戶()
     {
-        $account1 = BankAccount::create([
-            'user_id' => $this->user->id,
-            'bank_id' => $this->bank->id,
-            'currency_id' => $this->currency->id,
-            'alias' => 'Acc 1',
-            'account_number' => '111',
-            'balance' => 100.00,
-            'balance_twd' => 3400.00,
-            'is_active' => true,
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
         ]);
 
-        // 模擬當匯率調整到 35.00
-        $this->service->recalculateAllByCurrency($this->currency->id, 35.00);
+        BankAccount::factory()->count(3)->create([
+            'user_id' => $user->id,
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+        ]);
 
-        $this->assertEquals(3500.00, $account1->fresh()->balance_twd);
+        // Act
+        $accounts = $this->service->getUserAccounts($user);
+
+        // Assert
+        $this->assertCount(3, $accounts);
+    }
+
+    /** @test */
+    public function 重新計算_balance_twd()
+    {
+        // Arrange
+        $user = User::factory()->create();
+        $bank = Bank::factory()->create();
+        $currency = Currency::factory()->create();
+        $exchangeRate = ExchangeRate::factory()->create([
+            'currency_id' => $currency->id,
+            'rate_to_twd' => 30.000000,
+        ]);
+
+        $account = BankAccount::create([
+            'user_id' => $user->id,
+            'bank_id' => $bank->id,
+            'currency_id' => $currency->id,
+            'alias' => '測試帳戶',
+            'account_number' => '1234567890',
+            'balance' => 1000,
+        ]);
+
+        // Act
+        $exchangeRate->update(['rate_to_twd' => 31.000000]);
+        $this->service->recalculateBalanceTwd($account);
+
+        // Assert
+        $account->refresh();
+        $this->assertEquals(31000.00, $account->balance_twd);
     }
 }
