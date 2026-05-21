@@ -2,24 +2,29 @@
 
 namespace App\Livewire;
 
-use App\Models\BankAccount;
-use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
+use App\Services\AssetSnapshotService;
 
 class DashboardAsset extends Component
 {
-    public $totalTwd = 0;
+    public $totalAsset = 0.00;
 
-    public function mount()
+    protected $listeners = [
+        'bankAccountSaved' => 'refreshAsset',
+    ];
+
+    public function mount(AssetSnapshotService $service)
     {
-        $this->calculateTotal();
+        $this->refreshAsset($service);
     }
 
-    public function calculateTotal()
+    public function refreshAsset(AssetSnapshotService $service)
     {
-        $this->totalTwd = BankAccount::where('user_id', Auth::id())
-            ->where('is_active', true)
-            ->sum('balance_twd');
+        if (auth()->check()) {
+            $this->totalAsset = $service->getTotalAsset(auth()->id());
+        } else {
+            $this->totalAsset = 0.00;
+        }
     }
 
     public function render()

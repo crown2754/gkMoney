@@ -2,93 +2,104 @@
 
 namespace App\Livewire;
 
-use App\Models\Bank;
-use App\Models\BankAccount;
-use App\Models\Currency;
-use App\Services\BankAccountService;
-use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
+use App\Models\Bank;
+use App\Models\Currency;
+use App\Models\BankAccount;
+use App\Services\BankAccountService;
 
 class BankAccountForm extends Component
 {
-    public $bankAccountId = null;
-    public $bankId;
-    public $currencyId;
-    public $alias;
-    public $accountNumber;
-    public $balance = 0;
+    public $accountId = null;
+    public $bankId = '';
+    public $currencyId = '';
+    public $alias = '';
+    public $accountNumber = '';
+    public $balance = 0.00;
 
-    public $banks;
-    public $currencies;
-
-    protected $bankAccountService;
+    protected $listeners = [
+        'editBankAccount' => 'loadAccount',
+        'resetBankAccountForm' => 'resetFields'
+    ];
 
     protected function rules()
     {
         return [
-            'bankId'       => 'required|exists:banks,id',
-            'currencyId'    => 'required|exists:currencies,id',
-            'alias'         => 'required|string|max:100',
-            'accountNumber'  => 'required|string|max:50',
-            'balance'        => 'required|numeric',
+            'bankId' => 'required|exists:banks,id',
+            'currencyId' => 'required|exists:currencies,id',
+            'alias' => 'required|string|max:100',
+            'accountNumber' => 'required|string|max:50',
+            'balance' => 'required|numeric',
         ];
     }
 
-    public function boot(BankAccountService $bankAccountService)
-    {
-        $this->bankAccountService = $bankAccountService;
-    }
+    protected $validationAttributes = [
+        'bankId' => '銀行',
+        'currencyId' => '幣別',
+        'alias' => '帳戶別名',
+        'accountNumber' => '帳號',
+        'balance' => '帳戶餘額',
+    ];
 
     public function mount()
     {
-        $this->banks      = Bank::where('is_active', true)->orderBy('name')->get();
-        $this->currencies = Currency::where('is_active', true)->orderBy('code')->get();
+        $this->resetFields();
     }
 
-    public function edit(BankAccount $account)
+    public function loadAccount($id)
     {
-        $this->bankAccountId = $account->id;
-        $this->bankId        = $account->bank_id;
-        $this->currencyId    = $account->currency_id;
-        $this->alias         = $account->alias;
+        $account = BankAccount::where('user_id', auth()->id())->findOrFail($id);
+        $this->accountId = $account->id;
+        $this->bankId = $account->bank_id;
+        $this->currencyId = $account->currency_id;
+        $this->alias = $account->alias;
         $this->accountNumber = $account->account_number;
-        $this->balance       = $account->balance;
+        $this->balance = $account->balance;
     }
 
-    public function save()
+    public function resetFields()
     {
-        $this->authorize('create', BankAccount::class);
+        $this->accountId = null;
+        $this->bankId = '';
+        $this->currencyId = '';
+        $this->alias = '';
+        $this->accountNumber = '';
+        $this->balance = 0.00;
+        $this->resetErrorBag();
+    }
 
+    public function save(BankAccountService $service)
+    {
         $validated = $this->validate();
 
         $data = [
-            'bank_id'        => $validated['bankId'],
-            'currency_id'    => $validated['currencyId'],
-            'alias'          => $validated['alias'],
-            'account_number' => $validated['accountNumber'],
-            'balance'        => $validated['balance'],
+            'bank_id' => $this->bankId,
+            'currency_id' => $this->currencyId,
+            'alias' => $this->alias,
+            'account_number' => $this->accountNumber,
+            'balance' => $this->balance,
         ];
 
-        if ($this->bankAccountId) {
-            $account = BankAccount::findOrFail($this->bankAccountId);
-            $this->authorize('update', $account);
-            $this->bankAccountService->update($account, $data);
+        if ($this->accountId) {
+            // 確保要編輯的帳戶確實屬於當前登入者
+            $account = BankAccount::where('user_id', auth()->id())->findOrFail($this->accountId);
+            $service->updateAccount($account->id, $data);
+            session()->flash('message', '銀行帳戶已成功更新！');
         } else {
-            $this->bankAccountService->create(Auth::user(), $data);
+            $data['user_id'] = auth()->id();
+            $service->createAccount($data);
+            session()->flash('message', '銀行帳戶已成功建立！');
         }
 
-        $this->reset(['bankAccountId', 'bankId', 'currencyId', 'alias', 'accountNumber', 'balance']);
         $this->dispatch('bankAccountSaved');
-        $this->dispatch('notify', type: 'success', message: '帳戶已儲存');
-    }
-
-    public function cancel()
-    {
-        $this->reset(['bankAccountId', 'bankId', 'currencyId', 'alias', 'accountNumber', 'balance']);
+        $this->resetFields();
     }
 
     public function render()
     {
-        return view('livewire.bank-account-form');
+        $banks = Bank::where('is_active', true)->orderBy('name')->get();
+        $currencies = Currency::where('is_active', true)->orderBy('code')->get();
+
+        return view('livewire.bank-account-form', compact('banks', 'currencies'));
     }
 }

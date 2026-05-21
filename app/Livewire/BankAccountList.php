@@ -2,42 +2,37 @@
 
 namespace App\Livewire;
 
+use Livewire\Component;
 use App\Models\BankAccount;
 use App\Services\BankAccountService;
-use Illuminate\Support\Facades\Auth;
-use Livewire\Component;
 
 class BankAccountList extends Component
 {
-    protected $bankAccountService;
-
     protected $listeners = [
         'bankAccountSaved' => '$refresh',
     ];
 
-    public function boot(BankAccountService $bankAccountService)
+    public function edit($accountId)
     {
-        $this->bankAccountService = $bankAccountService;
+        $this->dispatch('editBankAccount', $accountId);
     }
 
-    public function edit(BankAccount $account)
+    public function delete($accountId, BankAccountService $service)
     {
-        $this->dispatch('editBankAccount', account: $account);
-    }
+        // 確保要刪除的帳戶確實屬於當前登入者
+        $account = BankAccount::where('user_id', auth()->id())->findOrFail($accountId);
+        
+        $service->deleteAccount($account->id);
 
-    public function delete(BankAccount $account)
-    {
-        $this->authorize('delete', $account);
-        $this->bankAccountService->delete($account);
+        session()->flash('list-message', '帳戶已成功刪除。');
         $this->dispatch('bankAccountSaved');
-        $this->dispatch('notify', type: 'success', message: '帳戶已刪除');
     }
 
     public function render()
     {
-        $accounts = BankAccount::with(['bank', 'currency'])
-            ->where('user_id', Auth::id())
-            ->orderBy('created_at', 'desc')
+        $accounts = BankAccount::where('user_id', auth()->id())
+            ->with(['bank', 'currency'])
+            ->orderBy('id', 'desc')
             ->get();
 
         return view('livewire.bank-account-list', compact('accounts'));

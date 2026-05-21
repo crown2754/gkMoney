@@ -2,23 +2,14 @@
 
 namespace App\Providers;
 
+use App\Models\BankAccount;
+use App\Observers\BankAccountObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
-    public function register(): void
+    public function boot()
     {
-        //
-    }
-
-    /**
-     * Bootstrap any application services.
-     */
-    public function boot(): void
-    {
-        //
+        BankAccount::observe(BankAccountObserver::class);
     }
 }
