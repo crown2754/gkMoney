@@ -1,0 +1,1 @@
+<div class="bank-account-form" wire:submit="save">form</div>
