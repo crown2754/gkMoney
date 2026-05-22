@@ -1,10 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\BankAccountController;
-use App\Http\Controllers\ExchangeRateController;
 
-Route::middleware('auth')->group(function () {
-    Route::resource('asset/bank-accounts', BankAccountController::class);
-    Route::resource('asset/exchange-rates', ExchangeRateController::class);
+Route::get('/', function () {
+    return view('welcome');
+});
+
+// Example login route to test
+Route::get('/login', function () {
+    return response()->json(['message' => 'Login page']);
 });
