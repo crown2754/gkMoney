@@ -1,17 +1,17 @@
 <?php
-// file: app/Providers/AppServiceProvider.php
 
 namespace App\Providers;
 
-use App\Models\BankAccount;
-use App\Observers\BankAccountObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
-    public function boot()
+    /**
+     * Register any application services.
+     */
+    public function register(): void
     {
-        BankAccount::observe(BankAccountObserver::class);
+        //
     }
 
     /**
@@ -19,6 +19,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        BankAccount::observe(BankAccountObserver::class);
+        //
     }
 }
